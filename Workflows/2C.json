@@ -1,0 +1,897 @@
+{
+  "name": "2C",
+  "nodes": [
+    {
+      "parameters": {
+        "formId": "eq2oZQ"
+      },
+      "type": "n8n-nodes-tallyforms.tallyTrigger",
+      "typeVersion": 2,
+      "position": [
+        -272,
+        176
+      ],
+      "id": "5bc81ae0-63c8-4d13-91cb-cafc670ff7a6",
+      "name": "Tally Trigger",
+      "webhookId": "a62eb9f5-e4e6-4d7a-9829-33e96d8efd41",
+      "credentials": {
+        "tallyApi": {
+          "id": "TqMsTdZ4z1R2YKKD",
+          "name": "Tally account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// In \"Run Once for Each Item\" mode, use $json to access current item data\nconst tallyData = $json;\n\n// Helper: Find question value by its label (case-insensitive)\nconst getValueByLabel = (searchLabel) => {\n  // Safety check: ensure tallyData is an object\n  if (!tallyData || typeof tallyData !== 'object') {\n    return null;\n  }\n  \n  for (const key in tallyData) {\n    if (key.startsWith('question_') && tallyData[key]?.label) {\n      if (tallyData[key].label.toLowerCase() === searchLabel.toLowerCase()) {\n        return tallyData[key].value;\n      }\n    }\n  }\n  return null;\n};\n\n// ←←← NEW: Extract Company Website field ←←←\nconst companyWebsite = getValueByLabel('Company Website') || '';\n\n// ←←← NEW: Extract company_domain with smart fallback ←←←\nlet company_domain = null;\n\n// Priority 1: From company website field (cleanest)\nif (companyWebsite) {\n  company_domain = companyWebsite\n    .replace(/^https?:\\/\\//, '')      // Remove http:// or https://\n    .replace(/^www\\./, '')            // Remove www.\n    .replace(/\\/$/, '')               // Remove trailing slash\n    .split('/')[0]                    // Take first segment (remove paths)\n    .toLowerCase();                   // Normalize case\n}\n\n// Priority 2: From email domain (fallback, excluding free providers)\nif (!company_domain) {\n  const email = (getValueByLabel('Email') || '').toLowerCase().trim();\n  if (email && email.includes('@')) {\n    const emailDomain = email.split('@')[1];\n    const freeProviders = [\n      'gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', \n      'icloud.com', 'aol.com', 'protonmail.com', 'mail.com'\n    ];\n    \n    if (!freeProviders.includes(emailDomain)) {\n      company_domain = emailDomain;\n    }\n    // else: company_domain stays null (personal email, no deduplication)\n  }\n}\n\n// Extract other fields by label with safety checks\nconst lead = {\n  name: getValueByLabel('Name') || '',\n  email: (getValueByLabel('Email') || '').toLowerCase().trim(),\n  company: getValueByLabel('Company Name') || '',\n  role: getValueByLabel('Role') || getValueByLabel('Job Title') || '',\n  message: getValueByLabel('Message') || '',\n  \n  // ←←← NEW: company_domain for universal deduplication ←←←\n  company_domain: company_domain,\n  \n  // UTM tracking (hidden fields)\n  utm_source: getValueByLabel('utm_source') || 'tally_organic',\n  utm_medium: getValueByLabel('utm_medium') || 'form',\n  utm_campaign: getValueByLabel('utm_campaign') || 'unknown',\n  utm_content: getValueByLabel('utm_content') || '',\n  utm_term: getValueByLabel('utm_term') || '',\n  form_url: getValueByLabel('form_url') || '',\n  \n  // Metadata from Tally root (with safety checks)\n  source: 'tally_form',\n  submission_id: tallyData?.id || '',\n  form_id: tallyData?.formId || '',\n  form_name: tallyData?.formName || '',\n  respondent_id: tallyData?.respondentId || '',\n  submitted_at: tallyData?.createdAt || new Date().toISOString()\n};\n\n// Validate required fields\nif (!lead.email || !lead.name) {\n  throw new Error(`Missing required fields: name=\"${lead.name}\", email=\"${lead.email}\"`);\n}\n\nreturn { json: lead };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -48,
+        176
+      ],
+      "id": "0bb46b1f-2bde-4465-899f-1414a6ee7acc",
+      "name": "Normalize Tally Lead"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "leads",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "company_domain",
+              "condition": "eq",
+              "keyValue": "={{ $json.company_domain }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        176,
+        176
+      ],
+      "id": "c7a478d2-5a4d-46ab-9d48-e357cd9c19eb",
+      "name": "Lead Check",
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRIj2KgzMPdZm0MP",
+          "name": "Customer Database"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "leads",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "company_domain",
+              "condition": "eq",
+              "keyValue": "={{ $json.company_domain }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "last_contacted_at",
+              "fieldValue": "={{ $now }}"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "New"
+            },
+            {
+              "fieldId": "metadata",
+              "fieldValue": "={{ {  \n  last_ingested: $now,\n  utm_source: $('Normalize Tally Lead').item.json.utm_source,\n  utm_medium: $('Normalize Tally Lead').item.json.utm_medium, \n  utm_campaign: $('Normalize Tally Lead').item.json.utm_campaign,\n  last_form_submission: $('Normalize Tally Lead').item.json.submitted_at,\n  last_message: $('Normalize Tally Lead').item.json.message\n} }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        624,
+        80
+      ],
+      "id": "1c3ecc0e-5b36-42ae-9a52-e6b51f351943",
+      "name": "Update Existing Lead",
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRIj2KgzMPdZm0MP",
+          "name": "Customer Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "180c76c6-f497-497b-bff0-74571480308b",
+              "leftValue": "={{ $json.company_domain }}",
+              "rightValue": "=",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "ac6d6dff-8bc6-45c4-a422-bab5a3e41473",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        400,
+        176
+      ],
+      "id": "96fd6bdf-14cf-4257-94b1-dfb9d84f4274",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "tableId": "leads",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "name",
+              "fieldValue": "={{ $json.name }}"
+            },
+            {
+              "fieldId": "email",
+              "fieldValue": "={{ $('Normalize Tally Lead').item.json.email }}"
+            },
+            {
+              "fieldId": "company",
+              "fieldValue": "={{ $('Normalize Tally Lead').item.json.company }}"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "New"
+            },
+            {
+              "fieldId": "source",
+              "fieldValue": "tally_form"
+            },
+            {
+              "fieldId": "metadata",
+              "fieldValue": "={{ { utm_source: $('Normalize Tally Lead').item.json.utm_source, utm_medium: $('Normalize Tally Lead').item.json.utm_medium, utm_campaign: $('Normalize Tally Lead').item.json.utm_campaign, submitted_at: $('Normalize Tally Lead').item.json.submitted_at } }}"
+            },
+            {
+              "fieldId": "role",
+              "fieldValue": "={{ $('Normalize Tally Lead').item.json.role }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        624,
+        272
+      ],
+      "id": "793895a5-29eb-4aed-b723-383772e37641",
+      "name": "Insert New Lead",
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRIj2KgzMPdZm0MP",
+          "name": "Customer Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -272,
+        432
+      ],
+      "id": "4d788087-3f90-4d0c-bdc6-3cb742b56d16",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "Run actor and get dataset",
+        "actorId": {
+          "__rl": true,
+          "value": "hKByXkMQaC5Qt9UMN",
+          "mode": "list",
+          "cachedResultName": "Linkedin Jobs Scraper (curious_coder/linkedin-jobs-scraper)",
+          "cachedResultUrl": "https://console.apify.com/actors/hKByXkMQaC5Qt9UMN/input"
+        },
+        "customBody": "{\n  \"count\": 20,\n  \"scrapeCompany\": true,\n  \"splitByLocation\": false,\n  \"splitCountry\": \"PH\",\n  \"urls\": [\n    \"https://www.linkedin.com/jobs/search/?keywords=AI%20Automation&f_TPR=r604800&geoId=103121230\",\n    \"https://www.linkedin.com/jobs/search/?keywords=process%20automation&f_TPR=r604800&geoId=103121230\",\n    \"https://www.linkedin.com/jobs/search/?keywords=workflow%20automation&f_TPR=r604800&geoId=103121230\",\n    \"https://www.linkedin.com/jobs/search/?keywords=RPA%20developer&f_TPR=r604800&geoId=103121230\",\n    \"https://www.linkedin.com/jobs/search/?keywords=digital%20transformation&f_TPR=r604800&geoId=103121230\",\n    \"https://www.linkedin.com/jobs/search/?keywords=AI%20Automation&f_TPR=r604800&geoId=102890719\",\n    \"https://www.linkedin.com/jobs/search/?keywords=process%20automation&f_TPR=r604800&geoId=0&f_WT=2\"\n  ]\n}",
+        "memory": 512,
+        "authentication": "apifyOAuth2Api"
+      },
+      "type": "@apify/n8n-nodes-apify.apify",
+      "typeVersion": 1,
+      "position": [
+        -32,
+        432
+      ],
+      "id": "d0c044bb-d4b5-4e9f-b155-38dbe39f42e6",
+      "name": "Run an Actor and get dataset",
+      "credentials": {
+        "apifyOAuth2Api": {
+          "id": "BKwSbKpDKMCROshR",
+          "name": "Apify OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// In \"Run Once for Each Item\" mode\nconst job = $json;\n\n// ←←← STEP 1: Extract & Clean Domain ←←←\nconst website = job.companyWebsite || '';\nlet company_domain = null;\n\nif (website) {\n  company_domain = website\n    .replace(/^https?:\\/\\//, '')  // Remove protocol\n    .replace(/^www\\./, '')        // Remove www\n    .replace(/^careers\\./, '')    // Remove careers subdomain\n    .replace(/^jobs\\./, '')       // Remove jobs subdomain\n    .replace(/^apply\\./, '')      // Remove apply subdomain\n    .replace(/\\/$/, '')           // Remove trailing slash\n    .split('/')[0]                // Remove paths\n    .split('?')[0]                // Remove query params\n    .toLowerCase();               // Normalize case\n\n  // ←←← SAFETY: Exclude free providers & ATS systems ←←←\n  const excludeDomains = [\n    'gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'linkedin.com',\n    'indeed.com', 'glassdoor.com', 'workday.com', 'darwinbox.com',\n    'greenhouse.io', 'lever.co', 'smartrecruiters.com', 'ashby.com'\n  ];\n  \n  if (excludeDomains.some(d => company_domain.includes(d))) {\n    company_domain = null;\n  }\n}\n\n// ←←← STEP 2: Intent Scoring ←←←\nconst description = (job.descriptionText || '').toLowerCase();\nconst automationKeywords = ['automation', 'AI', 'workflow', 'RPA', 'streamline', 'optimize', 'manual'];\nconst intentScore = automationKeywords.filter(k => description.includes(k)).length * 15;\n\n// ←←← STEP 3: Location Handling (Fixed for Object/String) ←←←\n// Apify sometimes returns location as an object, sometimes as a string\nconst loc = job.location || '';\nconst locStr = typeof loc === 'string' ? loc : (loc.formattedAddressShort || loc.city || loc.country || '');\nconst isPH = locStr.includes('Philippines') || job.country === 'PH';\n\n// ←←← STEP 4: Build Lead Object ←←←\nconst lead = {\n  name: 'Hiring Manager',\n  email: company_domain ? `hello@${company_domain}` : '',\n  company: job.companyName || '',\n  role: job.title || '',\n  message: `Saw you're hiring for ${job.title}. We help automate workflows with AI.`,\n  \n  company_domain: company_domain,\n  \n  intent_score: Math.min(100, intentScore),\n  source: 'linkedin_jobs_scraper',\n  scraped_at: new Date().toISOString(),\n  target_market: isPH ? 'philippines' : 'remote',\n  job_url: job.link || '',\n  job_posted_date: job.postedAt || '',\n  website: website\n};\n\n// ←←← STEP 5: Validate (Strict Filtering) ←←←\nif (!lead.company || !company_domain) {\n  // Skip leads without company name or valid domain\n  return null;\n}\n\nreturn { json: lead };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        192,
+        432
+      ],
+      "id": "66b97e21-2034-4e52-9596-34ebf886f889",
+      "name": "Normalize LinkedIn Jobs Lead",
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "leads",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "company_domain",
+              "condition": "eq",
+              "keyValue": "={{ $json.company_domain }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        656,
+        448
+      ],
+      "id": "fff80141-2800-4c67-a241-07bba86f060b",
+      "name": "Lead Check1",
+      "alwaysOutputData": true,
+      "executeOnce": false,
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRIj2KgzMPdZm0MP",
+          "name": "Customer Database"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "180c76c6-f497-497b-bff0-74571480308b",
+              "leftValue": "={{ $json.company_domain }}",
+              "rightValue": "=",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "ac6d6dff-8bc6-45c4-a422-bab5a3e41473",
+              "leftValue": "={{ $('Lead Check1').first().json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "ignoreCase": false
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        832,
+        448
+      ],
+      "id": "bc3ab63f-a4f8-4b12-8849-1160d9ecfb51",
+      "name": "If1",
+      "alwaysOutputData": false,
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "tableId": "leads",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "name",
+              "fieldValue": "={{ $('Normalize LinkedIn Jobs Lead').item.json.name }}"
+            },
+            {
+              "fieldId": "email",
+              "fieldValue": "={{ $('Normalize LinkedIn Jobs Lead').item.json.email }}"
+            },
+            {
+              "fieldId": "company",
+              "fieldValue": "={{ $('Normalize LinkedIn Jobs Lead').item.json.company }}"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "New"
+            },
+            {
+              "fieldId": "source",
+              "fieldValue": "={{ $('Normalize LinkedIn Jobs Lead').item.json.source }}"
+            },
+            {
+              "fieldId": "metadata",
+              "fieldValue": "={{ { intent_score: $json.intent_score, job_url: $json.job_url, job_posted_date: $json.job_posted_date, target_market: $json.target_market, website: $json.website, scraped_at: $json.scraped_at, message: $json.message } }}"
+            },
+            {
+              "fieldId": "role",
+              "fieldValue": "={{ $('Normalize LinkedIn Jobs Lead').item.json.role }}"
+            },
+            {
+              "fieldId": "company_domain",
+              "fieldValue": "={{ $('Normalize LinkedIn Jobs Lead').item.json.company_domain }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1088,
+        512
+      ],
+      "id": "087e064d-be27-43c3-8167-a7563173a362",
+      "name": "Insert New Lead1",
+      "executeOnce": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRIj2KgzMPdZm0MP",
+          "name": "Customer Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        416,
+        432
+      ],
+      "id": "4bee0785-988c-4fc4-b3e5-96a164638d0c",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "leads",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "company_domain",
+              "condition": "eq",
+              "keyValue": "={{ $json.company_domain }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        688,
+        848
+      ],
+      "id": "fa0aa97e-1f16-48b8-907b-a1dd1216c936",
+      "name": "Lead Check2",
+      "alwaysOutputData": true,
+      "executeOnce": false,
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRIj2KgzMPdZm0MP",
+          "name": "Customer Database"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "180c76c6-f497-497b-bff0-74571480308b",
+              "leftValue": "={{ $json.company_domain }}",
+              "rightValue": "=",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "ac6d6dff-8bc6-45c4-a422-bab5a3e41473",
+              "leftValue": "={{ $('Lead Check2').first().json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "ignoreCase": false
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        912,
+        848
+      ],
+      "id": "b11b4200-63a4-46f1-8d29-161fb05f36e4",
+      "name": "If2",
+      "alwaysOutputData": false,
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "tableId": "leads",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "name",
+              "fieldValue": "={{ $('Normalize Indeed Lead').item.json.name }}"
+            },
+            {
+              "fieldId": "email",
+              "fieldValue": "={{ $('Normalize Indeed Lead').item.json.email }}"
+            },
+            {
+              "fieldId": "company",
+              "fieldValue": "={{ $('Normalize Indeed Lead').item.json.company }}"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "New"
+            },
+            {
+              "fieldId": "source",
+              "fieldValue": "={{ $('Normalize Indeed Lead').item.json.source }}"
+            },
+            {
+              "fieldId": "metadata",
+              "fieldValue": "={{ { intent_score: $json.intent_score, job_url: $json.job_url, job_posted_date: $json.job_posted_date, target_market: $json.target_market, website: $json.website, scraped_at: $json.scraped_at, message: $json.message } }}"
+            },
+            {
+              "fieldId": "role",
+              "fieldValue": "={{ $('Normalize Indeed Lead').item.json.role }}"
+            },
+            {
+              "fieldId": "company_domain",
+              "fieldValue": "={{ $('Normalize Indeed Lead').item.json.company_domain }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1136,
+        960
+      ],
+      "id": "d7b4a17b-b581-44a3-919f-3a838620d1b4",
+      "name": "Insert New Lead2",
+      "executeOnce": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRIj2KgzMPdZm0MP",
+          "name": "Customer Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        432,
+        832
+      ],
+      "id": "2d94e07a-0e32-4e7f-8b8b-59dd169b5719",
+      "name": "Loop Over Items1"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// In \"Run Once for Each Item\" mode\nconst job = $json;\n\n// ←←← STEP 1: Extract Domain from Nested companyLinks ←←←\n// Indeed Apify actor stores website in job.companyLinks.corporateWebsite\nconst website = job.companyLinks?.corporateWebsite || '';\nlet company_domain = null;\n\nif (website) {\n  company_domain = website\n    .replace(/^https?:\\/\\//, '')  // Remove http/https\n    .replace(/^www\\./, '')        // Remove www\n    .replace(/\\/$/, '')           // Remove trailing slash\n    .split('/')[0]                // Remove paths\n    .split('?')[0]                // Remove query params\n    .toLowerCase();\n\n  // Exclude job boards and free providers\n  const exclude = ['indeed.com', 'glassdoor.com', 'linkedin.com', 'gmail.com', 'yahoo.com'];\n  if (exclude.some(d => company_domain.includes(d))) {\n    company_domain = null;\n  }\n}\n\n// ←←← STEP 2: Intent Scoring ←←←\nconst description = (job.descriptionText || job.descriptionHtml || '').toLowerCase();\nconst title = (job.title || '').toLowerCase();\nconst keywords = ['automation', 'AI', 'workflow', 'RPA', 'streamline', 'optimize', 'manual', 'process improvement'];\nconst intentScore = keywords.filter(k => description.includes(k) || title.includes(k)).length * 15;\n\n// ←←← STEP 3: Location Handling ←←←\n// Location might be string or object; handle both safely\nconst loc = job.location || '';\nconst locStr = typeof loc === 'string' ? loc : (loc.formattedAddressShort || loc.city || loc.country || '');\nconst isPH = locStr.includes('Philippines') || job.country === 'PH' || job.locale === 'ph';\n\n// ←←← STEP 4: Build Lead Object ←←←\nconst lead = {\n  name: 'Hiring Manager',\n  email: company_domain ? `hello@${company_domain}` : '',\n  company: job.companyName || job.company || '',\n  role: job.title || '',\n  message: `Saw you're hiring for ${job.title}. We help automate workflows with AI.`,\n  \n  company_domain: company_domain,\n  \n  intent_score: Math.min(100, intentScore),\n  source: 'indeed_jobs_scraper',\n  scraped_at: new Date().toISOString(),\n  target_market: isPH ? 'philippines' : 'remote',\n  \n  job_url: job.jobUrl || `https://www.indeed.com/viewjob?jk=${job.jobKey}`,\n  job_posted_date: job.datePublished || job.postedAt || '',\n  website: website\n};\n\n// ←←← STEP 5: Validate with Debug Logs ←←←\nif (!lead.company) {\n  console.log(`❌ SKIPPED: No company name for ${job.title}`);\n  return null;\n}\n\nif (!company_domain) {\n  // ⚠️ CRITICAL: Indeed often lacks websites. This will skip leads without domains.\n  console.log(`❌ SKIPPED: No domain for ${lead.company} (website: ${website})`);\n  return null;\n}\n\nconsole.log(`✅ PASSED: ${lead.company} (${company_domain})`);\nreturn { json: lead };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        832
+      ],
+      "id": "47c6590f-03c0-4f9b-8024-d1a9df61944e",
+      "name": "Normalize Indeed Lead",
+      "executeOnce": false,
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "operation": "Run actor and get dataset",
+        "actorSource": "store",
+        "actorId": {
+          "__rl": true,
+          "value": "MXLpngmVpE8WTESQr",
+          "mode": "list",
+          "cachedResultName": "🚀 Indeed jobs scraper [PPR] (borderline/indeed-scraper)",
+          "cachedResultUrl": "https://console.apify.com/actors/MXLpngmVpE8WTESQr/input"
+        },
+        "customBody": "{\n    \"country\": \"ph\",\n    \"enableUniqueJobs\": false,\n    \"fromDays\": \"14\",\n    \"includeSimilarJobs\": false,\n    \"jobType\": \"fulltime\",\n    \"level\": \"mid_level\",\n    \"location\": \"remote\",\n    \"maxRows\": 20,\n    \"query\": \"AI Automation\",\n    \"radius\": \"100\",\n    \"remote\": \"remote\",\n    \"sort\": \"relevance\"\n}",
+        "memory": 512,
+        "authentication": "apifyOAuth2Api"
+      },
+      "type": "@apify/n8n-nodes-apify.apify",
+      "typeVersion": 1,
+      "position": [
+        -16,
+        832
+      ],
+      "id": "f0a73539-7888-4d5a-ac7e-0972cdb6af73",
+      "name": "Indeed Scraper",
+      "credentials": {
+        "apifyOAuth2Api": {
+          "id": "BKwSbKpDKMCROshR",
+          "name": "Apify OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1072,
+        320
+      ],
+      "id": "98e64ec4-f565-412f-813a-8b1724b5989f",
+      "name": "No Operation, do nothing"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        752
+      ],
+      "id": "aa9240e5-b52c-4a27-8aec-df6190e1ba74",
+      "name": "No Operation, do nothing1"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -272,
+        832
+      ],
+      "id": "bf8c9105-cb68-427b-bd62-8617f6676ddd",
+      "name": "Schedule Trigger1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Tally Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Tally Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Tally Lead": {
+      "main": [
+        [
+          {
+            "node": "Lead Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead Check": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Update Existing Lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Insert New Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Run an Actor and get dataset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run an Actor and get dataset": {
+      "main": [
+        [
+          {
+            "node": "Normalize LinkedIn Jobs Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize LinkedIn Jobs Lead": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead Check1": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "No Operation, do nothing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Insert New Lead1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert New Lead1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Lead Check1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead Check2": {
+      "main": [
+        [
+          {
+            "node": "If2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If2": {
+      "main": [
+        [
+          {
+            "node": "No Operation, do nothing1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Insert New Lead2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert New Lead2": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items1": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Lead Check2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Indeed Lead": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Indeed Scraper": {
+      "main": [
+        [
+          {
+            "node": "Normalize Indeed Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger1": {
+      "main": [
+        [
+          {
+            "node": "Indeed Scraper",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "e5eb01cb-7496-4391-99f0-9d4a54dbdf45",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "76266dccf6a9a630081d33eaca42802c18d8edaecd0a7ab37fdceb2d976f87d3"
+  },
+  "id": "3rgyTxgCKrDYpfVy",
+  "tags": []
+}

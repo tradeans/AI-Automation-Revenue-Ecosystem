@@ -1,0 +1,3022 @@
+{
+  "name": "3C",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 10
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -1024,
+        -224
+      ],
+      "id": "5e4e7d06-84be-4d67-b60e-af76f689a795",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "filters": {
+          "labelIds": [
+            "Label_7807969267021066056"
+          ],
+          "readStatus": "both"
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        -784,
+        -224
+      ],
+      "id": "7f750b0d-c6b2-4b24-a02b-9bb6ccf2fe23",
+      "name": "Get many messages",
+      "webhookId": "06e3c9e0-8d35-4c57-83b7-ae64555f07f6",
+      "alwaysOutputData": false,
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xMxmG9Am5t56g9pU",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "leads",
+        "limit": 1,
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "email",
+              "condition": "eq",
+              "keyValue": "={{ $json.messages[0].To }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -16,
+        -240
+      ],
+      "id": "a2dd8b6b-8c08-4744-a073-0643c155635a",
+      "name": "Lookup Lead",
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRIj2KgzMPdZm0MP",
+          "name": "Customer Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableId": "campaign_logs",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "workflow_name",
+              "fieldValue": "2B-Qualification"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "unknown_sender"
+            },
+            {
+              "fieldId": "metadata",
+              "fieldValue": "={{ { \"from_email\": $('Parse Reply').item.json.to_email, \"subject\": $('Parse Reply').item.json.subject, \"gmail_message_id\": $('Parse Reply').item.json.gmail_message_id, \"reason\": \"no_matching_lead\" } }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        224,
+        80
+      ],
+      "id": "2405e37f-04e8-48bd-9fda-b587b5b8bac6",
+      "name": "Log Unknown Sender",
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRIj2KgzMPdZm0MP",
+          "name": "Customer Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=# REPLY TO CLASSIFY\n{{ $('Get a thread').item.json.messages[1].snippet }}\n\n# ORIGINAL EMAIL CONTEXT\n{{ $('Get a thread').item.json.messages[0].snippet }}\n\n# ORIGINAL EMAIL SUBJECT\n{{ $('Get a thread').item.json.messages[0].Subject }}\n\n# CLASSIFY NOW\nReturn ONLY valid JSON matching the schema. No markdown, no explanations.",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "=# ROLE\nYou are a Sales Qualification AI. Your job is to classify email reply intent with high accuracy.\n\n# INPUT DATA\nYou will receive:\n1. REPLY: The incoming email reply text\n2. ORIGINAL EMAIL: The outbound email we sent to this lead (from Pinecone context)\n\n# INTENT CATEGORIES (EXACT DEFINITIONS)\n\n## interested\n- Explicitly asks for meeting, demo, call, or next step\n- Shows clear buying signal (\"yes\", \"let's talk\", \"send pricing\")\n- Positive sentiment + actionable request\n- Example: \"Yes, I'd love to chat. When are you available?\"\n\n## not_interested\n- Politely declines (\"not now\", \"not a fit\", \"not interested\")\n- Negative sentiment without objection handling\n- Example: \"Thanks but we're all set for now.\"\n\n## out_of_office\n- Auto-reply, vacation notice, temporary unavailability\n- Often contains \"out of office\", \"away\", \"returning on\"\n- Example: \"I'm out of the office until March 15th.\"\n\n## question\n- Asks for more info, clarification, or has objections\n- Not clearly interested or disinterested\n- Example: \"What's your pricing?\" or \"How does this integrate with Salesforce?\"\n\n## unsubscribe\n- Requests removal from list, \"stop emailing\", GDPR request\n- Example: \"Please remove me from your list.\"\n\n# OUTPUT RULES\n1. Return ONLY valid JSON matching the schema\n2. confidence must be 0.0-1.0 based on clarity of intent\n3. reasoning must be <200 chars, factual, no speculation\n4. key_phrases: extract 1-3 exact phrases from the reply\n5. requires_human_review = true if:\n   - confidence < 0.7\n   - Reply contains legal/compliance language\n   - Reply is aggressive/hostile\n   - Multiple conflicting intents detected\n\n# EXAMPLES\n\n## Example 1: Interested\n{\n  \"intent\": \"interested\",\n  \"confidence\": 0.95,\n  \"reasoning\": \"Explicitly requested meeting time and mentioned budget\",\n  \"key_phrases\": [\"when's a good time\", \"$5k budget\"],\n  \"requires_human_review\": false\n}\n\n## Example 2: Question\n{\n  \"intent\": \"question\",\n  \"confidence\": 0.88,\n  \"reasoning\": \"Asks about integration but no clear buying signal\",\n  \"key_phrases\": [\"does this work with\", \"Salesforce\"],\n  \"requires_human_review\": false\n}\n\n## Example 3: Low Confidence (Needs Review)\n{\n  \"intent\": \"question\",\n  \"confidence\": 0.52,\n  \"reasoning\": \"Ambiguous tone, could be interested or just gathering info\",\n  \"key_phrases\": [\"maybe\", \"tell me more\"],\n  \"requires_human_review\": true\n}"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        528,
+        -256
+      ],
+      "id": "6413525a-dcce-4201-a556-3cdfbcdfa614",
+      "name": "Intent Classifier"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        512,
+        -80
+      ],
+      "id": "e0a0734e-7049-4b89-ab30-68fd2a5e6903",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "vc2DKJOlorisnHWC",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"intent\": {\n      \"type\": \"string\",\n      \"enum\": [\"interested\", \"not_interested\", \"out_of_office\", \"question\", \"unsubscribe\"],\n      \"description\": \"The primary intent of this reply\"\n    },\n    \"confidence\": {\n      \"type\": \"number\",\n      \"minimum\": 0,\n      \"maximum\": 1,\n      \"description\": \"Confidence score 0.0-1.0\"\n    },\n    \"reasoning\": {\n      \"type\": \"string\",\n      \"maxLength\": 200,\n      \"description\": \"Brief explanation of classification\"\n    },\n    \"key_phrases\": {\n      \"type\": \"array\",\n      \"items\": { \"type\": \"string\" },\n      \"description\": \"1-3 exact phrases that informed classification\"\n    },\n    \"requires_human_review\": {\n      \"type\": \"boolean\",\n      \"description\": \"True if reply is ambiguous or sensitive\"\n    }\n  },\n  \"required\": [\"intent\", \"confidence\", \"reasoning\", \"key_phrases\", \"requires_human_review\"]\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        720,
+        -64
+      ],
+      "id": "068794c2-5c5e-410b-b25c-f18754773374",
+      "name": "Structured Output Parser"
+    },
+    {
+      "parameters": {
+        "resource": "thread",
+        "operation": "get",
+        "threadId": "={{ $json.threadId }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        -512,
+        -224
+      ],
+      "id": "ce730514-37ff-4f48-97ed-dadf4ad5369d",
+      "name": "Get a thread",
+      "webhookId": "d1e220fd-90c2-4d0a-a114-06c0607a23d5",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xMxmG9Am5t56g9pU",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=# LATEST REPLY (Primary Source)\n{{ $('Get a thread').item.json.messages[1].textBody || $('Get a thread').item.json.messages[1].snippet }}\n\n# ORIGINAL OUTREACH (Context)\n{{ $('Get a thread').item.json.messages[0].textBody || $('Get a thread').item.json.messages[0].snippet }}\n\n# LEAD INFO (From Supabase)\nCompany: {{ $('Lookup Lead').item.json.company }}\nIndustry: {{ $('Lookup Lead').item.json.industry }}\nRole: {{ $('Lookup Lead').item.json.role }}\n\n# INTENT CLASSIFICATION (From Previous Node)\nIntent: {{ $('Intent Classifier').item.json.output.intent }}\nConfidence: {{ $('Intent Classifier').item.json.output.confidence }}\nKey Phrases: {{ JSON.stringify($('Intent Classifier').item.json.output.key_phrases) }}\n\n# EXTRACTION TASK\nAnalyze the reply above and extract BANT qualification details.\n\nGuidelines:\n1. Prioritize EXPLICIT statements over assumptions\n2. Use \"Not specified\" for any field without clear evidence\n3. Consider the full thread context (not just latest reply)\n4. Factor in lead's role/company when inferring authority\n5. next_step_suggestion should be specific to their situation\n\nReturn ONLY valid JSON. No markdown. No explanations.",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "=# ROLE\nYou are a Senior Sales Qualification AI specializing in BANT framework extraction.\nYour job is to analyze email replies and extract qualification signals with high accuracy.\n\n# BANT FRAMEWORK DEFINITIONS\n\n## Budget\n- Explicit budget numbers mentioned (e.g., \"$5k/month\", \"$50k annual\")\n- Budget range indicators (e.g., \"around 10k\", \"mid-five figures\")\n- Budget authority hints (e.g., \"I control the budget\", \"need CFO approval\")\n- If no budget info: \"Not specified\"\n\n## Authority\n- Decision-maker status (e.g., \"I'm the head of...\", \"I report to...\")\n- Buying process info (e.g., \"need team alignment\", \"I can make this call\")\n- Role seniority (e.g., \"CEO\", \"Director\", \"Manager\")\n- If unclear: \"Not specified\"\n\n## Need\n- Core pain point or challenge expressed\n- Specific problem they want to solve\n- Goal or outcome they're seeking\n- If vague: Summarize what they hinted at\n\n## Timeline\n- Explicit dates (e.g., \"by Q2\", \"next month\", \"March 15\")\n- Urgency indicators (e.g., \"ASAP\", \"this week\", \"soon\")\n- Implementation window (e.g., \"looking to start in 30 days\")\n- If no timeline: \"Not specified\"\n\n# OUTPUT RULES (CRITICAL)\n\n1. Return ONLY valid JSON matching the schema exactly\n2. NEVER hallucinate numbers, dates, or titles not present in the text\n3. Use \"Not specified\" for any field with no clear signal\n4. Keep all values under 150 characters each\n5. next_step_suggestion must be ONE actionable sentence for the AE\n6. If reply is ambiguous, set confidence_note in metadata (not in output)\n\n# CONFIDENCE GUIDELINES\n\n| Signal Strength | Examples |\n|----------------|----------|\n| HIGH | \"$5k budget\", \"I'm the CEO\", \"Need by March\" |\n| MEDIUM | \"around that price range\", \"I think I can approve\", \"soon\" |\n| LOW/NONE | No mention → Use \"Not specified\" |\n\n# EXAMPLES\n\n## Example 1: Strong Signals\n{\n  \"budget\": \"$5k/month mentioned\",\n  \"authority\": \"Head of Operations, decision-maker\",\n  \"need\": \"Scaling support during rapid hiring\",\n  \"timeline\": \"Wants to start next month\",\n  \"next_step_suggestion\": \"Book 30-min demo, prepare ROI calc for $5k/mo budget\"\n}\n\n## Example 2: Partial Signals\n{\n  \"budget\": \"Not specified\",\n  \"authority\": \"Manager, needs VP approval\",\n  \"need\": \"Reduce onboarding time for new hires\",\n  \"timeline\": \"Not specified\",\n  \"next_step_suggestion\": \"Qualify budget in call, invite VP to second meeting\"\n}\n\n## Example 3: Weak Signals\n{\n  \"budget\": \"Not specified\",\n  \"authority\": \"Not specified\",\n  \"need\": \"General interest in automation\",\n  \"timeline\": \"Not specified\",\n  \"next_step_suggestion\": \"Discovery call needed to uncover BANT details\"\n}",
+          "maxIterations": 10
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1408,
+        -1408
+      ],
+      "id": "897a34c2-a95d-40b6-b576-bd9f4d8ecf92",
+      "name": "BANT Extractor"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        1392,
+        -1232
+      ],
+      "id": "8552e1ff-fd6e-4a7c-bdfb-ad22afc2bd3a",
+      "name": "OpenAI Chat Model1",
+      "credentials": {
+        "openAiApi": {
+          "id": "vc2DKJOlorisnHWC",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"budget\": { \"type\": \"string\" },\n    \"authority\": { \"type\": \"string\" },\n    \"need\": { \"type\": \"string\" },\n    \"timeline\": { \"type\": \"string\" },\n    \"next_step_suggestion\": { \"type\": \"string\" }\n  },\n  \"required\": [\"budget\", \"authority\", \"need\", \"timeline\", \"next_step_suggestion\"]\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1600,
+        -1216
+      ],
+      "id": "e98e2fa0-8ca7-44a5-9212-d15fd0280478",
+      "name": "Structured Output Parser1"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0AQ2M8QDS7",
+          "mode": "list",
+          "cachedResultName": "all-kevyn-sales"
+        },
+        "text": "=🎯 HOT LEAD - HUMAN HANDOFF REQUIRED\n\n*Lead:* {{ $('Lookup Lead').item.json.name }}\n*Company:* {{ $('Lookup Lead').item.json.company }}\n*Role:* {{ $('Lookup Lead').item.json.role }}\n*Email:* {{ $('Lookup Lead').item.json.email }}\n\n*Intent Classification:*\n• Intent: {{ $('Intent Classifier').item.json.output.intent }}\n• Confidence: {{ $('Intent Classifier').item.json.output.confidence }}\n• Key Phrases: {{ $('Intent Classifier').item.json.output.key_phrases.join(', ') }}\n\n*BANT Qualification:*\n• 💰 Budget: {{ $('BANT Extractor').item.json.output.budget }}\n• 👤 Authority: {{ $('BANT Extractor').item.json.output.authority }}\n• 🎯 Need: {{ $('BANT Extractor').item.json.output.need }}\n• 📅 Timeline: {{ $('BANT Extractor').item.json.output.timeline }}\n\n*Recommended Next Step:*\n{{ $('BANT Extractor').item.json.output.next_step_suggestion }}\n\n*Conversation Context:*\n📧 *Original Outreach:* {{ $('Get a thread').item.json.messages[0].snippet }}\n💬 *Lead's Reply:* {{ $('Get a thread').item.json.messages[1].snippet }}\n",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        1760,
+        -1408
+      ],
+      "id": "c6740ad5-5bf9-4880-9cd0-ebf6b1d1991a",
+      "name": "Slack: Hot Lead Alert - Human Handoff",
+      "webhookId": "0a4e83dd-3caf-4157-b4f0-53c6d2d69767",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "u9RJ3Ub7J451Zjxo",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "leads",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Lookup Lead').item.json.id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "Qualified"
+            },
+            {
+              "fieldId": "last_contacted_at",
+              "fieldValue": "={{ $now }}"
+            },
+            {
+              "fieldId": "metadata",
+              "fieldValue": "={{ { \"qualified_at\": $now, \"qualified_by\": \"workflow_2B\", \"intent\": $('Intent Classifier').item.json.output.intent, \"bant_summary\": { \"budget\": $('BANT Extractor').item.json.output.budget, \"timeline\": $('BANT Extractor').item.json.output.timeline } } }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1968,
+        -1408
+      ],
+      "id": "953a4b47-b5fc-4156-b7ab-5a6fbc0630db",
+      "name": "Update a row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRIj2KgzMPdZm0MP",
+          "name": "Customer Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableId": "interactions",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "lead_id",
+              "fieldValue": "={{ $('Lookup Lead').item.json.id }}"
+            },
+            {
+              "fieldId": "type",
+              "fieldValue": "reply_received"
+            },
+            {
+              "fieldId": "content_summary",
+              "fieldValue": "="
+            },
+            {
+              "fieldId": "metadata",
+              "fieldValue": "={{ { \"intent\": $('Intent Classifier').item.json.output.intent, \"confidence\": $('Intent Classifier').item.json.output.confidence, \"gmail_message_id\": $('Get a thread').item.json.messages[1].id, \"handled_by\": \"human_sales\" } }}"
+            },
+            {
+              "fieldId": "created_at",
+              "fieldValue": "={{ $now }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2608,
+        -1408
+      ],
+      "id": "85e46fb9-8239-463f-9cba-6b59b6f65130",
+      "name": "Create a row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRIj2KgzMPdZm0MP",
+          "name": "Customer Database"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -240,
+        32
+      ],
+      "id": "a3349e1b-e827-4dec-9bd8-cbe20fc39e56",
+      "name": "No Operation, do nothing",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "options": {
+          "dimensions": 1536
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        2800,
+        -1200
+      ],
+      "id": "e84c16ab-ce19-49da-83bf-c4e9691d4113",
+      "name": "Embeddings OpenAI",
+      "credentials": {
+        "openAiApi": {
+          "id": "5YU350qzwd2lpgyV",
+          "name": "OpenAI account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $('Get a thread').item.json.messages[1].snippet }}",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "lead_id",
+                "value": "={{ $('Lookup Lead').item.json.id }}"
+              },
+              {
+                "name": "lead_email",
+                "value": "={{ $('Lookup Lead').item.json.email }}"
+              },
+              {
+                "name": "lead_company",
+                "value": "={{ $('Lookup Lead').item.json.company }}"
+              },
+              {
+                "name": "type",
+                "value": "reply_received"
+              },
+              {
+                "name": "workflow",
+                "value": "2B"
+              },
+              {
+                "name": "intent",
+                "value": "={{ $('Intent Classifier').item.json.output.intent }}"
+              },
+              {
+                "name": "confidence",
+                "value": "={{ $('Intent Classifier').item.json.output.confidence }}"
+              },
+              {
+                "name": "handled_by",
+                "value": "human_sales"
+              },
+              {
+                "name": "gmail_message_id",
+                "value": "={{ $('Get a thread').item.json.messages[0].id }}"
+              },
+              {
+                "name": "gmail_thread_id",
+                "value": "={{ $('Get a thread').item.json.messages[0].threadId }}"
+              },
+              {
+                "name": "timestamp",
+                "value": "={{ $now }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        2976,
+        -1200
+      ],
+      "id": "b262628b-2e79-4ebd-b4e4-9550a7d21687",
+      "name": "Default Data Loader"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=# LATEST REPLY (Primary Source)\n{{ $('Get a thread').item.json.messages[1].textBody || $('Get a thread').item.json.messages[1].snippet }}\n\n# ORIGINAL OUTREACH (Context)\n{{ $('Get a thread').item.json.messages[0].snippet }}\n\n# LEAD INFO (From Supabase)\nCompany: {{ $('Lookup Lead').item.json.company }}\nIndustry: {{ $('Lookup Lead').item.json.industry }}\nRole: {{ $('Lookup Lead').item.json.role }}\n\n# INTENT CLASSIFICATION (From Previous Node)\nIntent: {{ $('Intent Classifier').item.json.output.intent }}\nConfidence: {{ $('Intent Classifier').item.json.output.confidence }}\nKey Phrases: {{ JSON.stringify($('Intent Classifier').item.json.output.key_phrases) }}\n\n# INSTRUCTIONS\n1. Use the `knowledge_base` tool to find accurate information.\n2. Draft a warm, consultative reply that answers the question and gently invites further conversation.\n3. Avoid being pushy or salesy. Focus on being helpful and relevant.\n4. If the tool doesn't provide sufficient info, set requires_human_review to true.\n5. Return ONLY valid JSON.",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "=# ROLE & PERSONA\nYou are a Senior Sales Consultant with a warm, consultative, and professional demeanor.\nYour name isn't stated, but your tone reflects an experienced sales professional who cares about the client's success.\n\nYour goal is twofold:\n1. Be genuinely helpful by answering questions accurately using the Knowledge Base.\n2. Gently guide the conversation toward a discovery call by highlighting value and relevance.\n\n# TONE & VOICE GUIDELINES\n- Warm & Empathetic: Use natural, human language. Show you understand their situation.\n- Professional yet Approachable: Avoid robotic phrasing. Write like a thoughtful colleague.\n- Consultative: Focus on solving problems, not just listing features.\n- Subtle Persuasion: Never be pushy. Use \"soft\" CTAs that invite rather than demand.\n- Concise: Respect their time. Keep replies under 150 words.\n- No Hype: Avoid exclamation marks, buzzwords (\"game-changer\", \"revolutionary\"), or over-promising.\n\n# KNOWLEDGE BASE TOOL USAGE\nYou have access to the `knowledge_base` tool.\n- ALWAYS use this tool for factual questions about pricing, features, integrations, security, or policies.\n- Base your answer STRICTLY on the tool results. Never hallucinate company-specific info.\n- If the tool returns no results or insufficient info, set \"requires_human_review\": true.\n\n# RESPONSE STRATEGY\n\n## 1. Connect & Answer (The \"Helpful\" Part)\n- Start by acknowledging their question with a touch of empathy or relevance.\n  - Good: \"Great question about integrations—it's something many teams prioritize when scaling.\"\n  - Bad: \"Here is the integration info.\"\n- Provide a clear, accurate answer using the Knowledge Base.\n- Synthesize multiple FAQs if needed, but keep it digestible.\n\n## 2. Bridge to Value (The \"Consultative\" Part)\n- After answering, add ONE sentence that connects the answer to a business outcome or their specific context.\n- Use subtle persuasion tactics:\n  - Value Prop: \"This is particularly helpful for teams looking to reduce onboarding time.\"\n  - Social Proof: \"Most [Role]s we work with find this critical for maintaining data consistency.\"\n  - Curiosity: \"I'd be curious to hear how you're currently handling this in your workflow.\"\n  - Relevance: \"Given you're in [Industry], this feature often helps with [Specific Pain Point].\"\n- Skip persuasion if the question is sensitive, legal, or the lead seems frustrated.\n\n## 3. Soft Call-to-Action\n- End with a low-pressure invitation to continue the conversation.\n- Examples:\n  - \"Would you be open to a brief chat to see how this fits your stack?\"\n  - \"If helpful, I can walk you through a quick demo tailored to your use case.\"\n  - \"Happy to jump on a 15-min call if you'd like to explore further.\"\n- Avoid hard sells: \"Buy now!\", \"Schedule immediately!\", \"Don't miss out!\"\n\n## 4. Escalation Protocol\nSet \"requires_human_review\": true if:\n- Knowledge Base lacks the answer.\n- Question involves pricing negotiation, legal terms, or custom contracts.\n- Lead's tone is aggressive, skeptical, or indicates churn risk.\n- You're unsure about the accuracy or appropriateness of the response.\n\n# OUTPUT FORMAT\nReturn ONLY valid JSON matching the schema:\n{\n  \"subject\": \"string (max 70 chars, natural and relevant)\",\n  \"body\": \"string (max 150 words, warm and consultative)\",\n  \"faq_used\": [\"string (FAQ IDs or categories from tool)\"],\n  \"persuasion_tactic\": \"value_prop|social_proof|curiosity|relevance|none\",\n  \"next_step_cta\": \"string (soft, inviting CTA)\",\n  \"requires_human_review\": boolean,\n  \"confidence_note\": \"string\"\n}\n\n# EXAMPLES\n\n## Example 1: Integration Question\nInput: \"Do you integrate with Salesforce?\"\nOutput:\n{\n  \"subject\": \"Re: Salesforce integration\",\n  \"body\": \"Great question! Yes, we offer a native Salesforce connector plus REST API access, with setup typically taking 1–2 hours. Many sales ops teams find this keeps their pipeline data consistent without manual exports. Would you be open to a quick 15-min chat to see how it fits your current stack?\",\n  \"faq_used\": [\"Integrations\"],\n  \"persuasion_tactic\": \"social_proof\",\n  \"next_step_cta\": \"15-min chat to review integration fit\",\n  \"requires_human_review\": false,\n  \"confidence_note\": \"\"\n}\n\n## Example 2: Pricing Question\nInput: \"What's your pricing?\"\nOutput:\n{\n  \"subject\": \"Re: Pricing details\",\n  \"body\": \"Our plans start at $49/month for Starter and $149/month for Pro, both with a 14-day free trial. Most teams begin with Pro to unlock advanced workflows and priority support. If you'd like, I can share a quick overview of which plan aligns best with your team size and goals. Would Tuesday or Wednesday work for a brief chat?\",\n  \"faq_used\": [\"Pricing\"],\n  \"persuasion_tactic\": \"value_prop\",\n  \"next_step_cta\": \"Brief chat to recommend plan\",\n  \"requires_human_review\": false,\n  \"confidence_note\": \"\"\n}\n\n## Example 3: Complex Question (Escalation)\nInput: \"Can you guarantee 99.999% uptime in our contract?\"\nOutput:\n{\n  \"subject\": \"Re: SLA requirements\",\n  \"body\": \"That's an important requirement. While our standard SLA covers 99.9% uptime, custom guarantees like 99.999% may be possible under enterprise agreements. I'd like to connect you with our solutions team to discuss your specific needs and feasibility. Would you be open to an intro call?\",\n  \"faq_used\": [\"Security & Compliance\"],\n  \"persuasion_tactic\": \"none\",\n  \"next_step_cta\": \"Intro call with solutions team\",\n  \"requires_human_review\": true,\n  \"confidence_note\": \"Custom SLA terms require human negotiation\"\n}",
+          "maxIterations": 10
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1872,
+        -1024
+      ],
+      "id": "8d330ece-ff64-4ad1-bd4a-5649d3497a0f",
+      "name": "Persuasive Reply Drafter"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "responsesApiEnabled": false,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        1840,
+        -784
+      ],
+      "id": "fc3e5477-6ac4-45af-b97b-37752c9cf8a9",
+      "name": "OpenAI Chat Model2",
+      "credentials": {
+        "openAiApi": {
+          "id": "5YU350qzwd2lpgyV",
+          "name": "OpenAI account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "dimensions": 512
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        2000,
+        -736
+      ],
+      "id": "3123690b-44bf-4257-a377-00949f47b6e7",
+      "name": "Embeddings OpenAI1",
+      "credentials": {
+        "openAiApi": {
+          "id": "5YU350qzwd2lpgyV",
+          "name": "OpenAI account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolDescription": "Extract from the vector base to answer the customers questions.",
+        "pineconeIndex": {
+          "__rl": true,
+          "value": "sales-knowledge-base",
+          "mode": "list",
+          "cachedResultName": "sales-knowledge-base"
+        },
+        "includeDocumentMetadata": false,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePinecone",
+      "typeVersion": 1.3,
+      "position": [
+        2128,
+        -816
+      ],
+      "id": "41c00416-00c2-4e6f-8705-c76982a0f75d",
+      "name": "knowledge_base",
+      "credentials": {
+        "pineconeApi": {
+          "id": "Yk71GOoA4oXmeFBr",
+          "name": "PineconeApi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"subject\": \"Re: Pricing details\",\n  \"body\": \"Our plans start at $49/month for Starter and $149/month for Pro, both with a 14-day free trial. Most teams begin with Pro to unlock advanced workflows and priority support. If you'd like, I can share a quick overview of which plan aligns best with your team size and goals. Would Tuesday or Wednesday work for a brief chat?\",\n  \"faq_used\": [\"Pricing\"],\n  \"persuasion_tactic\": \"value_prop\",\n  \"next_step_cta\": \"Brief chat to recommend plan\",\n  \"requires_human_review\": false,\n  \"confidence_note\": \"\"\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        2192,
+        -1072
+      ],
+      "id": "196b65e2-9d4e-4061-a4d8-73ef1479a7dc",
+      "name": "Structured Output Parser2"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0AQW5DC0V7",
+          "mode": "list",
+          "cachedResultName": "questions"
+        },
+        "text": "=⚠️ QUESTION NEEDS HUMAN REVIEW\n*Lead:* {{ $('Lookup Lead').item.json.name }} @ {{ $('Lookup Lead').item.json.company }} \n*Role:* {{ $('Lookup Lead').item.json.role }} \n*Email:* {{ $('Get many messages').item.json.To }}  \n*Lead's Question:* > {{ $('Get a thread').item.json.messages[1].snippet }}  \n*AI Draft Reply:* > {{ $('Persuasive Reply Drafter').item.json.output.body }}  \n*AI Analysis:* \n• *Confidence Note:* {{ $('Persuasive Reply Drafter').item.json.output.confidence_note }} \n• *FAQs Used:* {{ $('Persuasive Reply Drafter').item.json.output.faq_used.join(', ') }} • *Persuasion Tactic:* {{ $('Persuasive Reply Drafter').item.json.output.persuasion_tactic }} \n• *Suggested CTA:* {{ $('Persuasive Reply Drafter').item.json.output.next_step_cta }}  *Quick Actions:* 📧 <mailto:{{ $('Get many messages').item.json.From }} \nsubject=Re: {{ $('Get many messages').item.json.Subject }} \nbody={{ $('Persuasive Reply Drafter').item.json.output.body }}\n",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        2768,
+        -1040
+      ],
+      "id": "1d3ad7cd-b645-4103-9b32-2d36ff5c1e88",
+      "name": "Slack: Question Needs Review",
+      "webhookId": "5b1f6862-d696-40cb-8879-8ed2d46ec3c5",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "93hrYEcMFsbBhXBL",
+          "name": "Slack OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "thread",
+        "operation": "reply",
+        "threadId": "={{ $('Get many messages').item.json.threadId }}",
+        "messageId": "={{ $('Get a thread').item.json.messages[1].id }}",
+        "message": "={{ $('Persuasive Reply Drafter').item.json.output.body }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2816,
+        -768
+      ],
+      "id": "54cfc3e8-8d3c-48cb-9434-9e2c7650a6d8",
+      "name": "Reply to a message",
+      "webhookId": "ce6572fc-2dce-4fbc-bee6-e64a7cf4992b",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xMxmG9Am5t56g9pU",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "321628c3-1aed-4d18-8462-39e5db294f33",
+              "leftValue": "={{ $json.messages[1].toJsonString() }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {
+          "ignoreCase": false
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -288,
+        -224
+      ],
+      "id": "0cb47178-c9bf-4edc-a96a-5ae7f5c037e4",
+      "name": "If they Replied",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "94ce07d2-f312-4552-b013-192e624455c3",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        160,
+        -240
+      ],
+      "id": "88e8cf6d-efaa-4369-a1a5-502ec6f1f244",
+      "name": "If They exist on CRM"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.output.intent }}",
+                    "rightValue": "interested",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "238488e6-ef45-4a28-bf01-5c3ad4404821"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Hot Lead"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "a6d0c142-3450-40cf-8d96-0619cba7b6a3",
+                    "leftValue": "={{ $json.output.intent }}",
+                    "rightValue": "question",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Question"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "c89fa2e8-3abe-4a94-81cd-f0eb7db7b29c",
+                    "leftValue": "={{ $json.output.intent }}",
+                    "rightValue": "not_interested",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Not Interested"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "b30d1875-4921-4249-aa16-ea76b85e8379",
+                    "leftValue": "={{ $json.output.intent }}",
+                    "rightValue": "unsubscribe",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Unsubscribe"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "3600390a-c739-4a94-8097-fbff742eacc7",
+                    "leftValue": "={{ $json.output.intent }}",
+                    "rightValue": "out_of_office",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Out of Office"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "45aceff9-3efc-4a78-9bc0-8b10fc8d128c",
+                    "leftValue": "={{ $json.output.confidence }}",
+                    "rightValue": 0.7,
+                    "operator": {
+                      "type": "number",
+                      "operation": "lt"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Low Confidence"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1168,
+        -320
+      ],
+      "id": "d8b0ff64-54a9-436c-820c-89c3781cbaf9",
+      "name": "Kind of Lead"
+    },
+    {
+      "parameters": {
+        "resource": "thread",
+        "operation": "removeLabels",
+        "threadId": "={{ $('Get a thread').item.json.messages[0].threadId }}",
+        "labelIds": [
+          "Label_7807969267021066056"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        3200,
+        -992
+      ],
+      "id": "919c330a-ba2b-4f2d-90e6-762483f7a5ef",
+      "name": "Remove label Outreach",
+      "webhookId": "bd57206e-a245-4cd4-9122-bebfd918e6c9",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xMxmG9Am5t56g9pU",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "thread",
+        "operation": "removeLabels",
+        "threadId": "={{ $('Get a thread').item.json.messages[0].threadId }}",
+        "labelIds": [
+          "Label_7807969267021066056"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2176,
+        -1408
+      ],
+      "id": "556a7692-0962-4b3c-b1ca-b19c87b96027",
+      "name": "Remove label Outreach1",
+      "webhookId": "bd57206e-a245-4cd4-9122-bebfd918e6c9",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xMxmG9Am5t56g9pU",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "thread",
+        "operation": "addLabels",
+        "threadId": "={{ $('Get a thread').item.json.messages[0].threadId }}",
+        "labelIds": [
+          "Label_6340278435394473565"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2400,
+        -1408
+      ],
+      "id": "b57b21a7-a7d0-4f96-b0b7-ba53e13085f9",
+      "name": "Add label to Hot Lead",
+      "webhookId": "29119707-b6da-4340-ad32-608617321671",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xMxmG9Am5t56g9pU",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "thread",
+        "operation": "addLabels",
+        "threadId": "={{ $('Get a thread').item.json.messages[0].threadId }}",
+        "labelIds": [
+          "Label_1591106466108618391"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        3408,
+        -992
+      ],
+      "id": "2d64cd91-9c30-4139-a2f6-89a8ba637aae",
+      "name": "Add label to Questions",
+      "webhookId": "29119707-b6da-4340-ad32-608617321671",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xMxmG9Am5t56g9pU",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableId": "campaign_logs",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "workflow_name",
+              "fieldValue": "2B-Question"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "needs_review"
+            },
+            {
+              "fieldId": "metadata",
+              "fieldValue": "={\n  \"lead_id\": \"{{ $('Lookup Lead').item.json.id }}\",\n  \"reason\": \"requires_human_review\",\n  \"confidence_note\": \"{{ $('Persuasive Reply Drafter').item.json.output.confidence_note }}\",\n  \"question\": \"{{ $('Get a thread').item.json.messages[1].snippet }}\"\n}"
+            },
+            {
+              "fieldId": "created_at",
+              "fieldValue": "={{ $now }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2976,
+        -992
+      ],
+      "id": "729f43b8-5136-4580-a554-a2f887b6659f",
+      "name": "Supabase: Log Review Request",
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRIj2KgzMPdZm0MP",
+          "name": "Customer Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "pineconeIndex": {
+          "__rl": true,
+          "value": "revenue-ops-memory",
+          "mode": "list",
+          "cachedResultName": "revenue-ops-memory"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePinecone",
+      "typeVersion": 1.3,
+      "position": [
+        3616,
+        -992
+      ],
+      "id": "5f815eda-2dd8-4f2b-85bc-bdfac156f9d9",
+      "name": "Vectorized Question",
+      "credentials": {
+        "pineconeApi": {
+          "id": "Yk71GOoA4oXmeFBr",
+          "name": "PineconeApi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "pineconeIndex": {
+          "__rl": true,
+          "value": "revenue-ops-memory",
+          "mode": "list",
+          "cachedResultName": "revenue-ops-memory"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePinecone",
+      "typeVersion": 1.3,
+      "position": [
+        2848,
+        -1408
+      ],
+      "id": "32322c10-d425-460c-973d-2aaba0453518",
+      "name": "Vectorized Reply",
+      "credentials": {
+        "pineconeApi": {
+          "id": "Yk71GOoA4oXmeFBr",
+          "name": "PineconeApi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "dimensions": 1536
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        3568,
+        -768
+      ],
+      "id": "de887809-eb00-4898-830a-247886826f0c",
+      "name": "Embeddings OpenAI2",
+      "credentials": {
+        "openAiApi": {
+          "id": "5YU350qzwd2lpgyV",
+          "name": "OpenAI account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $('Get a thread').item.json.messages[1].snippet }}",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "lead_id",
+                "value": "={{ $('Lookup Lead').item.json.id }}"
+              },
+              {
+                "name": "lead_email",
+                "value": "={{ $('Lookup Lead').item.json.email }}"
+              },
+              {
+                "name": "lead_company",
+                "value": "={{ $('Lookup Lead').item.json.company }}"
+              },
+              {
+                "name": "type",
+                "value": "reply_received"
+              },
+              {
+                "name": "workflow",
+                "value": "2B"
+              },
+              {
+                "name": "intent",
+                "value": "={{ $('Intent Classifier').item.json.output.intent }}"
+              },
+              {
+                "name": "confidence",
+                "value": "={{ $('Intent Classifier').item.json.output.confidence }}"
+              },
+              {
+                "name": "handled_by",
+                "value": "human_sales"
+              },
+              {
+                "name": "gmail_message_id",
+                "value": "={{ $('Get a thread').item.json.messages[0].id }}"
+              },
+              {
+                "name": "gmail_thread_id",
+                "value": "={{ $('Get a thread').item.json.messages[0].threadId }}"
+              },
+              {
+                "name": "timestamp",
+                "value": "={{ $now }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        3760,
+        -784
+      ],
+      "id": "89e780ce-e5b8-408d-90f9-85d23da446da",
+      "name": "Default Data Loader2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f8e595aa-40f3-441e-9a55-322991567e6e",
+              "leftValue": "={{ $json.output.requires_human_review }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2464,
+        -1024
+      ],
+      "id": "b4f650fe-3df5-4c23-b047-99552436a1a2",
+      "name": "If Need Human Review",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "resource": "thread",
+        "operation": "removeLabels",
+        "threadId": "={{ $('Get a thread').item.json.messages[0].threadId }}",
+        "labelIds": [
+          "Label_7807969267021066056"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1840,
+        -608
+      ],
+      "id": "dc101e63-60fd-44e4-81eb-44c5ef0e3d6a",
+      "name": "Remove label Outreach2",
+      "webhookId": "bd57206e-a245-4cd4-9122-bebfd918e6c9",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xMxmG9Am5t56g9pU",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableId": "campaign_logs",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "workflow_name",
+              "fieldValue": "2B-Not Interested"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "Not Interested"
+            },
+            {
+              "fieldId": "metadata",
+              "fieldValue": "={\n  \"lead_id\": \"{{ $('Lookup Lead').item.json.id }}\",\n  \"reason\": \"{{ $('Intent Classifier').item.json.output.reasoning }}\",\n  \"reply\": \"{{ $('Get a thread').item.json.messages[1].snippet }}\"\n}"
+            },
+            {
+              "fieldId": "created_at",
+              "fieldValue": "={{ $now }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2080,
+        -608
+      ],
+      "id": "3c1c48c6-59d1-423a-895a-f70aadff49fc",
+      "name": "Supabase: Log Review Request1",
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRIj2KgzMPdZm0MP",
+          "name": "Customer Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "leads",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Lookup Lead').item.json.id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "Not Interested"
+            },
+            {
+              "fieldId": "last_contacted_at",
+              "fieldValue": "={{ $now }}"
+            },
+            {
+              "fieldId": "metadata",
+              "fieldValue": "={{ { \"disqualified_at\": $now, \"reason\": \"not_interested\", \"intent_confidence\": $json.output.confidence, \"reply_snippet\": $('Get a thread').item.json.messages[1].snippet } }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1568,
+        -608
+      ],
+      "id": "435f717c-3250-43d6-afe4-e2213067d8a7",
+      "name": "Update to Not Interested",
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRIj2KgzMPdZm0MP",
+          "name": "Customer Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "dimensions": 1536
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        2240,
+        -416
+      ],
+      "id": "84010cf5-b0cb-4968-88df-b97bf3339068",
+      "name": "Embeddings OpenAI3",
+      "credentials": {
+        "openAiApi": {
+          "id": "5YU350qzwd2lpgyV",
+          "name": "OpenAI account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $('Get a thread').item.json.messages[1].snippet }}",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "lead_id",
+                "value": "={{ $('Lookup Lead').item.json.id }}"
+              },
+              {
+                "name": "lead_email",
+                "value": "={{ $('Lookup Lead').item.json.email }}"
+              },
+              {
+                "name": "lead_company",
+                "value": "={{ $('Lookup Lead').item.json.company }}"
+              },
+              {
+                "name": "type",
+                "value": "reply_received"
+              },
+              {
+                "name": "workflow",
+                "value": "2B"
+              },
+              {
+                "name": "intent",
+                "value": "={{ $('Intent Classifier').item.json.output.intent }}"
+              },
+              {
+                "name": "confidence",
+                "value": "={{ $('Intent Classifier').item.json.output.confidence }}"
+              },
+              {
+                "name": "handled_by",
+                "value": "AI"
+              },
+              {
+                "name": "gmail_message_id",
+                "value": "={{ $('Get a thread').item.json.messages[0].id }}"
+              },
+              {
+                "name": "gmail_thread_id",
+                "value": "={{ $('Get a thread').item.json.messages[0].threadId }}"
+              },
+              {
+                "name": "timestamp",
+                "value": "={{ $now }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        2400,
+        -416
+      ],
+      "id": "f964c795-a398-41a9-8e04-ac0e303cd579",
+      "name": "Default Data Loader1"
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "pineconeIndex": {
+          "__rl": true,
+          "value": "revenue-ops-memory",
+          "mode": "list",
+          "cachedResultName": "revenue-ops-memory"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePinecone",
+      "typeVersion": 1.3,
+      "position": [
+        2288,
+        -608
+      ],
+      "id": "43f14958-122f-491d-ada7-fa05fda39ad3",
+      "name": "Vectorized Rejection",
+      "credentials": {
+        "pineconeApi": {
+          "id": "Yk71GOoA4oXmeFBr",
+          "name": "PineconeApi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "leads",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Lookup Lead').item.json.id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "Unsubscribed"
+            },
+            {
+              "fieldId": "updated_at",
+              "fieldValue": "={{ $now }}"
+            },
+            {
+              "fieldId": "metadata",
+              "fieldValue": "={{ { \"unsubscribed_via\": \"email_reply\", \"gmail_message_id\": $('Get a thread').item.json.messages[1].id, \"unsubscribed_at\": $now } }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1488,
+        -240
+      ],
+      "id": "53497296-73f0-460b-8f6a-ede6d6494219",
+      "name": "Update a row1",
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRIj2KgzMPdZm0MP",
+          "name": "Customer Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "thread",
+        "operation": "reply",
+        "threadId": "={{ $('Get a thread').item.json.messages[0].threadId }}",
+        "messageId": "={{ $('Get a thread').item.json.messages[1].id }}",
+        "message": "=Hi there,\n\nWe've removed you from our outreach list as requested. You won't receive further emails from us.\n\nIf you change your mind in the future, feel free to reach out at hello@kevynmarketing.com.\n\nBest regards,\nKevyn",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1680,
+        -240
+      ],
+      "id": "bf6faf9b-70dd-459b-9fe1-f303345c265c",
+      "name": "Reply to a message1",
+      "webhookId": "ce6572fc-2dce-4fbc-bee6-e64a7cf4992b",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xMxmG9Am5t56g9pU",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "thread",
+        "operation": "removeLabels",
+        "threadId": "={{ $('Get a thread').item.json.messages[0].threadId }}",
+        "labelIds": [
+          "Label_7807969267021066056"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1888,
+        -240
+      ],
+      "id": "fa154aa0-1a53-4f63-ac82-87e2b9786fab",
+      "name": "Remove label Outreach3",
+      "webhookId": "bd57206e-a245-4cd4-9122-bebfd918e6c9",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xMxmG9Am5t56g9pU",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableId": "campaign_logs",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "workflow_name",
+              "fieldValue": "2B-Unsubscribe"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "Not Interested"
+            },
+            {
+              "fieldId": "metadata",
+              "fieldValue": "={\n  \"lead_id\": \"{{ $('Lookup Lead').item.json.id }}\",\n  \"reason\": \"{{ $('Intent Classifier').item.json.output.reasoning }}\",\n  \"reply\": \"{{ $('Get a thread').item.json.messages[1].snippet }}\"\n}"
+            },
+            {
+              "fieldId": "created_at",
+              "fieldValue": "={{ $now }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2096,
+        -240
+      ],
+      "id": "76c865d7-4bae-4048-b476-52e80f6714fc",
+      "name": "Supabase: Log Review Request2",
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRIj2KgzMPdZm0MP",
+          "name": "Customer Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "pineconeIndex": {
+          "__rl": true,
+          "value": "revenue-ops-memory",
+          "mode": "list",
+          "cachedResultName": "revenue-ops-memory"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePinecone",
+      "typeVersion": 1.3,
+      "position": [
+        2304,
+        -240
+      ],
+      "id": "f026f273-7594-4e8f-a1a2-43a9074d6112",
+      "name": "Vectorized Rejection1",
+      "credentials": {
+        "pineconeApi": {
+          "id": "Yk71GOoA4oXmeFBr",
+          "name": "PineconeApi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "dimensions": 1536
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        2272,
+        -64
+      ],
+      "id": "d179cdf4-d9bf-458b-a9ec-c31cb549d77c",
+      "name": "Embeddings OpenAI4",
+      "credentials": {
+        "openAiApi": {
+          "id": "5YU350qzwd2lpgyV",
+          "name": "OpenAI account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $('Get a thread').item.json.messages[1].snippet }}",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "lead_id",
+                "value": "={{ $('Lookup Lead').item.json.id }}"
+              },
+              {
+                "name": "lead_email",
+                "value": "={{ $('Lookup Lead').item.json.email }}"
+              },
+              {
+                "name": "lead_company",
+                "value": "={{ $('Lookup Lead').item.json.company }}"
+              },
+              {
+                "name": "type",
+                "value": "reply_received"
+              },
+              {
+                "name": "workflow",
+                "value": "2B"
+              },
+              {
+                "name": "intent",
+                "value": "={{ $('Intent Classifier').item.json.output.intent }}"
+              },
+              {
+                "name": "confidence",
+                "value": "={{ $('Intent Classifier').item.json.output.confidence }}"
+              },
+              {
+                "name": "handled_by",
+                "value": "AI"
+              },
+              {
+                "name": "gmail_message_id",
+                "value": "={{ $('Get a thread').item.json.messages[0].id }}"
+              },
+              {
+                "name": "gmail_thread_id",
+                "value": "={{ $('Get a thread').item.json.messages[0].threadId }}"
+              },
+              {
+                "name": "timestamp",
+                "value": "={{ $now }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        2432,
+        -64
+      ],
+      "id": "24961db5-a14d-42eb-ba64-ebd4eb2a9d59",
+      "name": "Default Data Loader3"
+    },
+    {
+      "parameters": {
+        "unit": "minutes"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1408,
+        112
+      ],
+      "id": "18eb5af6-d509-4fdc-b6f3-acdc557c79f5",
+      "name": "Wait",
+      "webhookId": "e7a87914-2871-45bb-b7e4-1d5b0780c5d7"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=# LATEST REPLY (Primary Source)\n{{ $('Get a thread').item.json.messages[1].textBody || $('Get a thread').item.json.messages[1].snippet }}\n\n# ORIGINAL OUTREACH (Context)\n{{ $('Get a thread').item.json.messages[0].textBody || $('Get a thread').item.json.messages[0].snippet }}\n\n# LEAD INFO (From Supabase)\nCompany: {{ $('Lookup Lead').item.json.company }}\nIndustry: {{ $('Lookup Lead').item.json.industry }}\nRole: {{ $('Lookup Lead').item.json.role }}\n\nDraft a gentle follow-up. Return ONLY valid JSON.",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are a thoughtful Sales Assistant drafting a gentle follow-up to someone who was out of office.\n\nGuidelines:\n- Acknowledge they were away (\"Hope you're back and well\").\n- Re-state value in ONE sentence (reference original outreach if helpful).\n- Ask if timing is better now.\n- Keep body under 60 words total.\n- No pressure, no hard sell, friendly tone.\n- Return ONLY valid JSON."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1680,
+        112
+      ],
+      "id": "dfe7937c-7206-4a7e-9c60-b271eed16897",
+      "name": "Follow-up Drafter"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "responsesApiEnabled": false,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        1632,
+        320
+      ],
+      "id": "1de03e47-b94f-47d3-a714-6ba61e3d1183",
+      "name": "OpenAI Chat Model3",
+      "credentials": {
+        "openAiApi": {
+          "id": "5YU350qzwd2lpgyV",
+          "name": "OpenAI account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"subject\": { \"type\": \"string\" },\n    \"body\": { \"type\": \"string\" }\n  },\n  \"required\": [\"subject\", \"body\"]\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1872,
+        320
+      ],
+      "id": "b343ca0f-0d35-45c8-a406-fea062fdb343",
+      "name": "Structured Output Parser3"
+    },
+    {
+      "parameters": {
+        "resource": "thread",
+        "operation": "reply",
+        "threadId": "={{ $('Get a thread').item.json.messages[0].threadId }}",
+        "messageId": "={{ $('Get a thread').item.json.messages[1].id }}",
+        "message": "={{ $json.output.body }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2016,
+        112
+      ],
+      "id": "414ad59b-bfb2-4360-b6c7-bfeee69052ef",
+      "name": "Reply to a message2",
+      "webhookId": "ce6572fc-2dce-4fbc-bee6-e64a7cf4992b",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xMxmG9Am5t56g9pU",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "leads",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Lookup Lead').item.json.id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "Nurturing"
+            },
+            {
+              "fieldId": "last_contacted_at",
+              "fieldValue": "={{ $now }}"
+            },
+            {
+              "fieldId": "metadata",
+              "fieldValue": "={{ {\"followup_sent\": $now, \"AI_Agent_response\": $('Follow-up Drafter').item.json.output.body} }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2240,
+        112
+      ],
+      "id": "1f8c4b9c-7f40-4031-a8d4-5d7e904c42b9",
+      "name": "Supabase: Log Review Request3",
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRIj2KgzMPdZm0MP",
+          "name": "Customer Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "thread",
+        "operation": "removeLabels",
+        "threadId": "={{ $('Get a thread').item.json.messages[0].threadId }}",
+        "labelIds": [
+          "Label_7807969267021066056"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2464,
+        112
+      ],
+      "id": "ef05951f-9e65-4309-a233-31712c564d3c",
+      "name": "Remove label Outreach4",
+      "webhookId": "bd57206e-a245-4cd4-9122-bebfd918e6c9",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xMxmG9Am5t56g9pU",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "thread",
+        "operation": "addLabels",
+        "threadId": "={{ $('Get a thread').item.json.messages[0].threadId }}",
+        "labelIds": [
+          "Label_6868225842888579148"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2688,
+        112
+      ],
+      "id": "a759758f-9011-4a28-8144-03efae36a5b5",
+      "name": "Add label to Hot Lead1",
+      "webhookId": "29119707-b6da-4340-ad32-608617321671",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xMxmG9Am5t56g9pU",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0AQCLJUBM2",
+          "mode": "list",
+          "cachedResultName": "nurturing"
+        },
+        "text": "=Nurturing - HUMAN HANDOFF REQUIRED\n\n*Lead:* {{ $('Lookup Lead').item.json.name }}\n*Company:* {{ $('Lookup Lead').item.json.company }}\n*Role:* {{ $('Lookup Lead').item.json.role }}\n*Email:* {{ $('Lookup Lead').item.json.email }}\n*Message:* {{ $('Get a thread').item.json.messages[1].snippet }}\n\n*Intent Classification:*\n• Intent: {{ $('Intent Classifier').item.json.output.intent }}\n• Confidence: {{ $('Intent Classifier').item.json.output.confidence }}\n\nNeeds to be nurtured for potential lead\n\n\n",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        2896,
+        112
+      ],
+      "id": "f03b29ec-6d27-4ba4-9fdf-5bd0ad11a564",
+      "name": "Send a message",
+      "webhookId": "38243b47-0fb7-4e7a-8f7c-b6a717bbe045",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "93hrYEcMFsbBhXBL",
+          "name": "Slack OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableId": "campaign_logs",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "workflow_name",
+              "fieldValue": "2B-Question"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "needs_review"
+            },
+            {
+              "fieldId": "metadata",
+              "fieldValue": "={\n  \"lead_id\": \"{{ $('Lookup Lead').item.json.id }}\",\n  \"reason\": \"requires_human_review\",\n  \"reply\": \"{{ $('Get a thread').item.json.messages[1].snippet }}\"\n}"
+            },
+            {
+              "fieldId": "created_at",
+              "fieldValue": "={{ $now }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        3120,
+        112
+      ],
+      "id": "c2b5d2aa-cc3b-42b5-a6cf-3c8b73297cab",
+      "name": "Supabase: Log Review Request4",
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRIj2KgzMPdZm0MP",
+          "name": "Customer Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "pineconeIndex": {
+          "__rl": true,
+          "value": "revenue-ops-memory",
+          "mode": "list",
+          "cachedResultName": "revenue-ops-memory"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePinecone",
+      "typeVersion": 1.3,
+      "position": [
+        3360,
+        112
+      ],
+      "id": "518714cf-b7de-44a5-952e-8547c456b4a1",
+      "name": "Vectorized Reply1",
+      "credentials": {
+        "pineconeApi": {
+          "id": "Yk71GOoA4oXmeFBr",
+          "name": "PineconeApi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "dimensions": 1536
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        3360,
+        288
+      ],
+      "id": "1645b01c-024c-496e-a686-db472ae5eef1",
+      "name": "Embeddings OpenAI5",
+      "credentials": {
+        "openAiApi": {
+          "id": "5YU350qzwd2lpgyV",
+          "name": "OpenAI account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $('Get a thread').item.json.messages[1].snippet }}",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "lead_id",
+                "value": "={{ $('Lookup Lead').item.json.id }}"
+              },
+              {
+                "name": "lead_email",
+                "value": "={{ $('Lookup Lead').item.json.email }}"
+              },
+              {
+                "name": "lead_company",
+                "value": "={{ $('Lookup Lead').item.json.company }}"
+              },
+              {
+                "name": "type",
+                "value": "reply_received"
+              },
+              {
+                "name": "workflow",
+                "value": "2B"
+              },
+              {
+                "name": "intent",
+                "value": "={{ $('Intent Classifier').item.json.output.intent }}"
+              },
+              {
+                "name": "confidence",
+                "value": "={{ $('Intent Classifier').item.json.output.confidence }}"
+              },
+              {
+                "name": "handled_by",
+                "value": "AI_ Agent"
+              },
+              {
+                "name": "gmail_message_id",
+                "value": "={{ $('Get a thread').item.json.messages[0].id }}"
+              },
+              {
+                "name": "gmail_thread_id",
+                "value": "={{ $('Get a thread').item.json.messages[0].threadId }}"
+              },
+              {
+                "name": "timestamp",
+                "value": "={{ $now }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        3488,
+        304
+      ],
+      "id": "cce164d0-032c-4082-bd4b-9c931f3125eb",
+      "name": "Default Data Loader4"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0AQVAGMW4C",
+          "mode": "list",
+          "cachedResultName": "sales-ops"
+        },
+        "text": "=⚠️ AMBIGUOUS REPLY - MANUAL REVIEW NEEDED\n\n*Lead:* {{ $('Supabase Lookup').item.json[0].name }} @ {{ $('Supabase Lookup').item.json[0].company }}\n*Role:* {{ $('Supabase Lookup').item.json[0].role }}\n*Email:* {{ $('Get a thread').item.json.messages[1].from.value[0].address }}\n\n*AI Classification:*\n• *Intent:* {{ $('Intent Classifier').output.intent }}\n• *Confidence:* {{ $('Intent Classifier').output.confidence }}\n• *Reasoning:* {{ $('Intent Classifier').output.reasoning }}\n• *Key Phrases:* {{ $('Intent Classifier').output.key_phrases.join(', ') }}\n\n*Lead's Reply:*\n> {{ $('Get a thread').item.json.messages[1].snippet }}\n",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        1424,
+        544
+      ],
+      "id": "51541eb6-6760-48ef-b479-080dc8e92628",
+      "name": "Slack: Low Confidence Alert",
+      "webhookId": "849327bf-cb3c-4e2f-946e-60662bf478f7",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "93hrYEcMFsbBhXBL",
+          "name": "Slack OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableId": "campaign_logs",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "workflow_name",
+              "fieldValue": "2B-Qualification"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "needs_review"
+            },
+            {
+              "fieldId": "metadata",
+              "fieldValue": "={{ { \"lead_id\": $('Supabase Lookup').item.json[0].id, \"intent\": $('Intent Classifier').output.intent, \"confidence\": $('Intent Classifier').output.confidence, \"reason\": \"low_confidence_or_human_review_flagged\", \"gmail_message_id\": $('Get a thread').item.json.messages[1].id } }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1664,
+        544
+      ],
+      "id": "c4db56b9-023c-4745-9965-2788f7b04697",
+      "name": "Supabase: Log Review Request5",
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRIj2KgzMPdZm0MP",
+          "name": "Customer Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "thread",
+        "operation": "removeLabels",
+        "threadId": "={{ $('Get a thread').item.json.messages[0].threadId }}",
+        "labelIds": [
+          "Label_7807969267021066056"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1872,
+        544
+      ],
+      "id": "c9d434e8-0616-419b-8caa-b723814ef594",
+      "name": "Remove label Outreach5",
+      "webhookId": "bd57206e-a245-4cd4-9122-bebfd918e6c9",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xMxmG9Am5t56g9pU",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "thread",
+        "operation": "addLabels",
+        "threadId": "={{ $('Get a thread').item.json.messages[0].threadId }}",
+        "labelIds": [
+          "Label_7021970139846242244"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2096,
+        544
+      ],
+      "id": "5b20401f-7d42-4cbd-a277-a1d846cf719b",
+      "name": "Add label to Hot Lead2",
+      "webhookId": "29119707-b6da-4340-ad32-608617321671",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xMxmG9Am5t56g9pU",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "pineconeIndex": {
+          "__rl": true,
+          "value": "revenue-ops-memory",
+          "mode": "list",
+          "cachedResultName": "revenue-ops-memory"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePinecone",
+      "typeVersion": 1.3,
+      "position": [
+        2352,
+        544
+      ],
+      "id": "37830d67-a8d9-4fb1-b0ab-2f411b08f4b9",
+      "name": "Vectorized Reply2",
+      "credentials": {
+        "pineconeApi": {
+          "id": "Yk71GOoA4oXmeFBr",
+          "name": "PineconeApi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "dimensions": 1536
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        2352,
+        720
+      ],
+      "id": "6f6769e5-9a55-4fb7-b8cf-4d005983148d",
+      "name": "Embeddings OpenAI6",
+      "credentials": {
+        "openAiApi": {
+          "id": "5YU350qzwd2lpgyV",
+          "name": "OpenAI account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $('Get a thread').item.json.messages[1].snippet }}",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "lead_id",
+                "value": "={{ $('Lookup Lead').item.json.id }}"
+              },
+              {
+                "name": "lead_email",
+                "value": "={{ $('Lookup Lead').item.json.email }}"
+              },
+              {
+                "name": "lead_company",
+                "value": "={{ $('Lookup Lead').item.json.company }}"
+              },
+              {
+                "name": "type",
+                "value": "reply_received"
+              },
+              {
+                "name": "workflow",
+                "value": "2B"
+              },
+              {
+                "name": "intent",
+                "value": "={{ $('Intent Classifier').item.json.output.intent }}"
+              },
+              {
+                "name": "confidence",
+                "value": "={{ $('Intent Classifier').item.json.output.confidence }}"
+              },
+              {
+                "name": "handled_by",
+                "value": "AI_ Agent"
+              },
+              {
+                "name": "gmail_message_id",
+                "value": "={{ $('Get a thread').item.json.messages[0].id }}"
+              },
+              {
+                "name": "gmail_thread_id",
+                "value": "={{ $('Get a thread').item.json.messages[0].threadId }}"
+              },
+              {
+                "name": "timestamp",
+                "value": "={{ $now }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        2480,
+        736
+      ],
+      "id": "df7a0dbd-7064-4605-a65b-75fcb3e6c409",
+      "name": "Default Data Loader5"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get many messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many messages": {
+      "main": [
+        [
+          {
+            "node": "Get a thread",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lookup Lead": {
+      "main": [
+        [
+          {
+            "node": "If They exist on CRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Intent Classifier",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Intent Classifier",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get a thread": {
+      "main": [
+        [
+          {
+            "node": "If they Replied",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intent Classifier": {
+      "main": [
+        [
+          {
+            "node": "Kind of Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "BANT Extractor",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser1": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "BANT Extractor",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "BANT Extractor": {
+      "main": [
+        [
+          {
+            "node": "Slack: Hot Lead Alert - Human Handoff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack: Hot Lead Alert - Human Handoff": {
+      "main": [
+        [
+          {
+            "node": "Update a row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a row": {
+      "main": [
+        [
+          {
+            "node": "Remove label Outreach1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a row": {
+      "main": [
+        [
+          {
+            "node": "Vectorized Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Vectorized Reply",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Vectorized Reply",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Persuasive Reply Drafter",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI1": {
+      "ai_embedding": [
+        [
+          {
+            "node": "knowledge_base",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "knowledge_base": {
+      "ai_tool": [
+        [
+          {
+            "node": "Persuasive Reply Drafter",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persuasive Reply Drafter": {
+      "main": [
+        [
+          {
+            "node": "If Need Human Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser2": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Persuasive Reply Drafter",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack: Question Needs Review": {
+      "main": [
+        [
+          {
+            "node": "Supabase: Log Review Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply to a message": {
+      "main": [
+        [
+          {
+            "node": "Remove label Outreach",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If they Replied": {
+      "main": [
+        [
+          {
+            "node": "Lookup Lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Operation, do nothing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If They exist on CRM": {
+      "main": [
+        [
+          {
+            "node": "Intent Classifier",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Unknown Sender",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kind of Lead": {
+      "main": [
+        [
+          {
+            "node": "BANT Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persuasive Reply Drafter",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update to Not Interested",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update a row1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Slack: Low Confidence Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove label Outreach": {
+      "main": [
+        [
+          {
+            "node": "Add label to Questions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove label Outreach1": {
+      "main": [
+        [
+          {
+            "node": "Add label to Hot Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add label to Hot Lead": {
+      "main": [
+        [
+          {
+            "node": "Create a row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase: Log Review Request": {
+      "main": [
+        [
+          {
+            "node": "Remove label Outreach",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add label to Questions": {
+      "main": [
+        [
+          {
+            "node": "Vectorized Question",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI2": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Vectorized Question",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader2": {
+      "ai_document": [
+        [
+          {
+            "node": "Vectorized Question",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Need Human Review": {
+      "main": [
+        [
+          {
+            "node": "Slack: Question Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply to a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove label Outreach2": {
+      "main": [
+        [
+          {
+            "node": "Supabase: Log Review Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update to Not Interested": {
+      "main": [
+        [
+          {
+            "node": "Remove label Outreach2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase: Log Review Request1": {
+      "main": [
+        [
+          {
+            "node": "Vectorized Rejection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI3": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Vectorized Rejection",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader1": {
+      "ai_document": [
+        [
+          {
+            "node": "Vectorized Rejection",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a row1": {
+      "main": [
+        [
+          {
+            "node": "Reply to a message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply to a message1": {
+      "main": [
+        [
+          {
+            "node": "Remove label Outreach3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove label Outreach3": {
+      "main": [
+        [
+          {
+            "node": "Supabase: Log Review Request2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase: Log Review Request2": {
+      "main": [
+        [
+          {
+            "node": "Vectorized Rejection1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI4": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Vectorized Rejection1",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader3": {
+      "ai_document": [
+        [
+          {
+            "node": "Vectorized Rejection1",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Follow-up Drafter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model3": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Follow-up Drafter",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser3": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Follow-up Drafter",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Follow-up Drafter": {
+      "main": [
+        [
+          {
+            "node": "Reply to a message2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply to a message2": {
+      "main": [
+        [
+          {
+            "node": "Supabase: Log Review Request3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove label Outreach4": {
+      "main": [
+        [
+          {
+            "node": "Add label to Hot Lead1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase: Log Review Request3": {
+      "main": [
+        [
+          {
+            "node": "Remove label Outreach4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add label to Hot Lead1": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        [
+          {
+            "node": "Supabase: Log Review Request4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase: Log Review Request4": {
+      "main": [
+        [
+          {
+            "node": "Vectorized Reply1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI5": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Vectorized Reply1",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader4": {
+      "ai_document": [
+        [
+          {
+            "node": "Vectorized Reply1",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack: Low Confidence Alert": {
+      "main": [
+        [
+          {
+            "node": "Supabase: Log Review Request5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove label Outreach5": {
+      "main": [
+        [
+          {
+            "node": "Add label to Hot Lead2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase: Log Review Request5": {
+      "main": [
+        [
+          {
+            "node": "Remove label Outreach5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI6": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Vectorized Reply2",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader5": {
+      "ai_document": [
+        [
+          {
+            "node": "Vectorized Reply2",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add label to Hot Lead2": {
+      "main": [
+        [
+          {
+            "node": "Vectorized Reply2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vectorized Question": {
+      "main": [
+        []
+      ]
+    },
+    "Vectorized Reply": {
+      "main": [
+        []
+      ]
+    },
+    "Vectorized Rejection": {
+      "main": [
+        []
+      ]
+    },
+    "Vectorized Rejection1": {
+      "main": [
+        []
+      ]
+    },
+    "Vectorized Reply1": {
+      "main": [
+        []
+      ]
+    },
+    "Vectorized Reply2": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "timezone": "Asia/Manila",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "9270daee-3b54-46f0-a444-59befa75f3d5",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "76266dccf6a9a630081d33eaca42802c18d8edaecd0a7ab37fdceb2d976f87d3"
+  },
+  "id": "Hvcx924SfN1Pmv9H",
+  "tags": []
+}
